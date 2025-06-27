@@ -236,16 +236,14 @@ class CachingStore<T> implements Store<T> {
 class LoggingStore<T> implements Store<T> {
     private readonly source: Store<T>;
     private readonly logStore: Store<string>;
-    private readonly prefix: string;
 
-    constructor(source: Store<T>, logStore: Store<string>, prefix: string) {
+    constructor(source: Store<T>, logStore: Store<string>) {
         this.source = source;
         this.logStore = logStore;
-        this.prefix = prefix;
     }
 
     private async log(operation: string, ref: string) {
-        const message = `${this.prefix} ${operation} ${ref}`;
+        const message = `${operation} ${ref}`;
         // The 'ref' for the logStore.put is arbitrary. 'log' is fine.
         return this.logStore.put('log', message);
     }
@@ -273,7 +271,14 @@ class LoggingStore<T> implements Store<T> {
 async function main() {
     // 1. Set up the stores.
     const consoleLog = new ConsoleStore();
-    const logPipeline = new SerializerStore(consoleLog, (data) => `${data}\n`);
+    const sourceLogPipeline = new SerializerStore(
+        consoleLog,
+        (data) => `[SOURCE] ${data}\n`
+    );
+    const cacheLogPipeline = new SerializerStore(
+        consoleLog,
+        (data) => `[CACHE] ${data}\n`
+    );
 
     const httpSource = new HttpStore();
     const relativeHttpSource = new RelativeStore(
@@ -281,10 +286,10 @@ async function main() {
         'https://jsonplaceholder.typicode.com',
         (prefix, ref) => `${prefix}/${ref}` // URL joiner
     );
-    const loggedHttpSource = new LoggingStore(relativeHttpSource, logPipeline, '[SOURCE]');
+    const loggedHttpSource = new LoggingStore(relativeHttpSource, sourceLogPipeline);
 
     const dictCache = new DictStore<string>();
-    const loggedDictCache = new LoggingStore(dictCache, logPipeline, '[CACHE]');
+    const loggedDictCache = new LoggingStore(dictCache, cacheLogPipeline);
 
     const store = new CachingStore(loggedHttpSource, loggedDictCache);
 
