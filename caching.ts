@@ -151,24 +151,32 @@ class RelativeStore<T> implements Store<T> {
 }
 
 /**
- * A SerializerStore is a mapping store that transforms data on writes.
+ * A SerializerStore is a mapping store that transforms data on writes and reads.
+ * It is generic over an input type `In` (the type this store presents) and
+ * an output type `Out` (the type the underlying `source` store uses).
  */
-class SerializerStore implements Store<string> {
-    private readonly source: Store<string>;
-    private readonly onWrite: (data: string) => string;
+class SerializerStore<In, Out> implements Store<In> {
+    private readonly source: Store<Out>;
+    private readonly onWrite: (data: In) => Out;
+    private readonly onRead: (data: Out) => In;
 
-    constructor(source: Store<string>, onWrite: (data: string) => string) {
+    constructor(source: Store<Out>, onWrite: (data: In) => Out, onRead: (data: Out) => In) {
         this.source = source;
         this.onWrite = onWrite;
+        this.onRead = onRead;
     }
 
-    async get(ref: string): Promise<string | null> {
-        // Pass-through for get
-        return this.source.get(ref);
+    async get(ref: string): Promise<In | null> {
+        const dataOut = await this.source.get(ref);
+        if (dataOut === null) {
+            return null;
+        }
+        return this.onRead(dataOut);
     }
 
-    async put(ref: string, data: string): Promise<void> {
-        return this.source.put(ref, this.onWrite(data));
+    async put(ref: string, data: In): Promise<void> {
+        const dataOut = this.onWrite(data);
+        return this.source.put(ref, dataOut);
     }
 
     async delete(ref: string): Promise<void> {
@@ -271,13 +279,15 @@ class LoggingStore<T> implements Store<T> {
 async function main() {
     // 1. Set up the stores.
     const consoleLog = new ConsoleStore();
-    const sourceLogPipeline = new SerializerStore(
+    const sourceLogPipeline = new SerializerStore<string, string>(
         consoleLog,
-        (data) => `[SOURCE] ${data}\n`
+        (data) => `[SOURCE] ${data}\n`,
+        (data) => { throw new Error("sourceLogPipeline is write-only"); }
     );
-    const cacheLogPipeline = new SerializerStore(
+    const cacheLogPipeline = new SerializerStore<string, string>(
         consoleLog,
-        (data) => `[CACHE] ${data}\n`
+        (data) => `[CACHE] ${data}\n`,
+        (data) => { throw new Error("cacheLogPipeline is write-only"); }
     );
 
     const httpSource = new HttpStore();
