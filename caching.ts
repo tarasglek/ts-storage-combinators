@@ -70,15 +70,9 @@ class HttpStore implements Store<string> {
  * This will serve as our cache.
  */
 class DiskStore implements Store<string> {
-    private sanitizePath(ref: string): string {
-        // Sanitize ref to prevent directory traversal attacks.
-        return path.normalize(ref).replace(/^(\.\.[\/\\])+/, '');
-    }
-
     async get(ref: string): Promise<string | null> {
         try {
-            const filePath = this.sanitizePath(ref);
-            return await fs.readFile(filePath, 'utf-8');
+            return await fs.readFile(ref, 'utf-8');
         } catch (error: any) {
             // A missing file is a cache miss, not an error.
             if (error.code === 'ENOENT') {
@@ -89,14 +83,13 @@ class DiskStore implements Store<string> {
     }
 
     async put(ref: string, data: string): Promise<void> {
-        const filePath = this.sanitizePath(ref);
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, data, 'utf-8');
+        await fs.mkdir(path.dirname(ref), { recursive: true });
+        await fs.writeFile(ref, data, 'utf-8');
     }
 
     async delete(ref: string): Promise<void> {
         try {
-            await fs.unlink(this.sanitizePath(ref));
+            await fs.unlink(ref);
         } catch (error: any) {
             // It's not an error if the file to delete doesn't exist.
             if (error.code !== 'ENOENT') {
