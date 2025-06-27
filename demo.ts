@@ -47,14 +47,10 @@ interface Store<T> {
 
 /**
  * A base interface for stores that handle metadata alongside data.
- * The metadata for a given piece of data is itself a Store.
+ * It extends the base Store interface, with the stored type constrained
+ * to be an object containing data and optional metadata.
  */
-interface StoreWithMetadata<T, M> {
-    get(ref: string): Promise<{ data: T | null, metadata: Store<M> }>;
-    put(ref: string, data: T, metadata?: Store<M>): Promise<void>;
-    merge(ref: string, data: T, metadata?: Store<M>): Promise<void>;
-    delete(ref: string, metadata?: Store<M>): Promise<void>;
-}
+interface StoreWithMetadata<D, M> extends Store<{ data: D, metadata?: M }> {}
 
 /**
  * A Store for fetching resources over HTTP.
