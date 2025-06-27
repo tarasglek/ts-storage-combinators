@@ -38,15 +38,9 @@ interface Store<T> {
  * This acts as our primary data source.
  */
 class HttpStore implements Store<string> {
-    private readonly baseUrl: string;
-
-    constructor(baseUrl: string) {
-        this.baseUrl = baseUrl;
-    }
-
     async get(ref: string): Promise<string | null> {
         try {
-            const response = await fetch(`${this.baseUrl}/${ref}`);
+            const response = await fetch(ref);
             if (!response.ok) {
                 // 404 is treated as a valid "not found" response.
                 if (response.status === 404) {
@@ -116,6 +110,37 @@ class DiskStore implements Store<string> {
                 throw error;
             }
         }
+    }
+}
+
+/**
+ * A RelativeStore combinator, based on Figure 15.
+ * It maps references by prepending a prefix.
+ */
+class RelativeStore<T> implements Store<T> {
+    private readonly source: Store<T>;
+    private readonly prefix: string;
+
+    constructor(source: Store<T>, prefix: string) {
+        this.source = source;
+        this.prefix = prefix;
+    }
+
+    private mapRef(ref: string): string {
+        // A simple string concatenation for URL paths.
+        return `${this.prefix}/${ref}`;
+    }
+
+    async get(ref: string): Promise<T | null> {
+        return this.source.get(this.mapRef(ref));
+    }
+
+    async put(ref: string, data: T): Promise<void> {
+        return this.source.put(this.mapRef(ref), data);
+    }
+
+    async delete(ref: string): Promise<void> {
+        return this.source.delete(this.mapRef(ref));
     }
 }
 
@@ -204,9 +229,10 @@ async function main() {
     // 1. Set up the stores and logger.
     const logger = { write: (message: string) => console.log(message) };
 
-    const httpSource = new HttpStore('https://jsonplaceholder.typicode.com');
+    const httpSource = new HttpStore();
+    const relativeHttpSource = new RelativeStore(httpSource, 'https://jsonplaceholder.typicode.com');
     const loggedHttpSource = new LoggingStore(
-        httpSource,
+        relativeHttpSource,
         logger,
         (op, ref) => `[SOURCE] ${op} ${ref}`
     );
