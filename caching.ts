@@ -4,6 +4,26 @@ import * as path from 'node:path';
 // Based on "Storage Combinators" paper.
 
 /**
+ * A Store that keeps data in an in-memory Map.
+ * This is analogous to DictStore from the paper.
+ */
+class DictStore<T> implements Store<T> {
+    private readonly data = new Map<string, T>();
+
+    async get(ref: string): Promise<T | null> {
+        return this.data.get(ref) ?? null;
+    }
+
+    async put(ref: string, data: T): Promise<void> {
+        this.data.set(ref, data);
+    }
+
+    async delete(ref: string): Promise<void> {
+        this.data.delete(ref);
+    }
+}
+
+/**
  * The Store interface, based on the Storage protocol from Figure 3.
  * It provides a generic, REST-like interface for accessing data.
  */
@@ -191,14 +211,14 @@ async function main() {
         (op, ref) => `[SOURCE] ${op} ${ref}`
     );
 
-    const diskCache = new DiskStore('./.cache');
-    const loggedDiskCache = new LoggingStore(
-        diskCache,
+    const dictCache = new DictStore<string>();
+    const loggedDictCache = new LoggingStore(
+        dictCache,
         logger,
         (op, ref) => `[CACHE] ${op} ${ref}`
     );
 
-    const store = new CachingStore(loggedHttpSource, loggedDiskCache);
+    const store = new CachingStore(loggedHttpSource, loggedDictCache);
 
     const resourceRef = 'todos/1';
 
@@ -218,7 +238,7 @@ async function main() {
     logger.write('--- Cleaning up cache ---');
     // In a real app, you might not delete from the source.
     // We use the CachingStore's delete which would try both.
-    await diskCache.delete(resourceRef);
+    await dictCache.delete(resourceRef);
     logger.write(`Cache for '${resourceRef}' cleaned.`);
 }
 
