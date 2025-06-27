@@ -55,9 +55,10 @@ interface StoreWithMetadata<D, M> extends Store<{ data: D, metadata?: M }> {}
 /**
  * A Store for fetching resources over HTTP.
  * This acts as our primary data source.
+ * It returns the response body as data, and a Store for the headers as metadata.
  */
-class HttpStore implements Store<string> {
-    async get(ref: string): Promise<string | null> {
+class HttpStore implements StoreWithMetadata<string, Store<string>> {
+    async get(ref: string): Promise<{ data: string; metadata?: Store<string> | undefined; } | null> {
         try {
             const response = await fetch(ref);
             if (!response.ok) {
@@ -67,24 +68,53 @@ class HttpStore implements Store<string> {
                 }
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-            return await response.text();
+            const body = await response.text();
+            return { data: body, metadata: new HeadersStore(response.headers) };
         } catch (error) {
             console.error(`HttpStore get failed for ref '${ref}':`, error);
             return null;
         }
     }
 
-    put(ref: string, data: string): Promise<void> {
+    put(ref: string, data: { data: string; metadata?: Store<string> | undefined; }): Promise<void> {
         // A simple read-only source doesn't implement put/merge/delete.
         throw new Error("HttpStore is read-only.");
     }
 
-    merge(ref: string, data: string): Promise<void> {
+    merge(ref: string, data: { data: string; metadata?: Store<string> | undefined; }): Promise<void> {
         throw new Error("HttpStore is read-only.");
     }
 
     delete(ref: string): Promise<void> {
         throw new Error("HttpStore is read-only.");
+    }
+}
+
+/**
+ * A read-only Store for accessing HTTP Headers.
+ * It lazily accesses headers from a Headers object.
+ */
+class HeadersStore implements Store<string> {
+    private readonly headers: Headers;
+
+    constructor(headers: Headers) {
+        this.headers = headers;
+    }
+
+    async get(ref: string): Promise<string | null> {
+        return this.headers.get(ref);
+    }
+
+    put(ref: string, data: string): Promise<void> {
+        throw new Error("HeadersStore is read-only.");
+    }
+
+    merge(ref: string, data: string): Promise<void> {
+        throw new Error("HeadersStore is read-only.");
+    }
+
+    delete(ref: string): Promise<void> {
+        throw new Error("HeadersStore is read-only.");
     }
 }
 
@@ -366,12 +396,22 @@ async function main() {
         'https://jsonplaceholder.typicode.com',
         (prefix, ref) => `${prefix}/${ref}` // URL joiner
     );
-    const loggedHttpSource = new LoggingStore(relativeHttpSource, sourceLogPipeline);
+    const loggedHttpSourceWithMetadata = new LoggingStore(relativeHttpSource, sourceLogPipeline);
+
+    // A SerializerStore to strip metadata from the source, so it can be
+    // cached by a simple string-based cache.
+    const source = new SerializerStore(
+        loggedHttpSourceWithMetadata,
+        // onWrite: string -> {data, metadata}. Metadata is optional.
+        (data: string) => ({ data: data }),
+        // onRead: {data, metadata} -> string
+        (result: { data: string, metadata?: Store<string> }) => result.data
+    );
 
     const dictCache = new DictStore<string>();
     const loggedDictCache = new LoggingStore(dictCache, cacheLogPipeline);
 
-    const store = new CachingStore(loggedHttpSource, loggedDictCache);
+    const store = new CachingStore(source, loggedDictCache);
 
     const resourceRef = 'todos/1';
 
