@@ -21,6 +21,17 @@ class DictStore<T> implements Store<T> {
     async delete(ref: string): Promise<void> {
         this.data.delete(ref);
     }
+
+    async merge(ref: string, data: T): Promise<void> {
+        const existing = this.data.get(ref);
+        if (existing && typeof existing === 'object' && existing !== null && typeof data === 'object' && data !== null) {
+            const merged = { ...existing, ...data };
+            this.data.set(ref, merged as T);
+        } else {
+            // For primitives, or if not existing, merge is same as put.
+            this.data.set(ref, data);
+        }
+    }
 }
 
 /**
@@ -30,6 +41,7 @@ class DictStore<T> implements Store<T> {
 interface Store<T> {
     get(ref: string): Promise<T | null>;
     put(ref: string, data: T): Promise<void>;
+    merge(ref: string, data: T): Promise<void>;
     delete(ref: string): Promise<void>;
 }
 
@@ -56,7 +68,11 @@ class HttpStore implements Store<string> {
     }
 
     put(ref: string, data: string): Promise<void> {
-        // A simple read-only source doesn't implement put/delete.
+        // A simple read-only source doesn't implement put/merge/delete.
+        throw new Error("HttpStore is read-only.");
+    }
+
+    merge(ref: string, data: string): Promise<void> {
         throw new Error("HttpStore is read-only.");
     }
 
@@ -97,6 +113,20 @@ class DiskStore implements Store<string> {
             }
         }
     }
+
+    async merge(ref: string, data: string): Promise<void> {
+        // For files, merge can be implemented as append.
+        try {
+            await fs.appendFile(ref, data, 'utf-8');
+        } catch (error: any) {
+            if (error.code === 'ENOENT') {
+                // If file doesn't exist, creating it is a valid merge outcome.
+                await this.put(ref, data);
+            } else {
+                throw error;
+            }
+        }
+    }
 }
 
 /**
@@ -110,6 +140,11 @@ class ConsoleStore implements Store<string> {
 
     async put(ref: string, data: string): Promise<void> {
         // Use process.stdout.write for raw output without a newline.
+        process.stdout.write(data);
+    }
+
+    async merge(ref: string, data: string): Promise<void> {
+        // For a simple logger, merge can be treated like put.
         process.stdout.write(data);
     }
 
@@ -145,6 +180,10 @@ class RelativeStore<T> implements Store<T> {
         return this.source.put(this.mapRef(ref), data);
     }
 
+    async merge(ref: string, data: T): Promise<void> {
+        return this.source.merge(this.mapRef(ref), data);
+    }
+
     async delete(ref: string): Promise<void> {
         return this.source.delete(this.mapRef(ref));
     }
@@ -177,6 +216,11 @@ class SerializerStore<In, Out> implements Store<In> {
     async put(ref: string, data: In): Promise<void> {
         const dataOut = this.onWrite(data);
         return this.source.put(ref, dataOut);
+    }
+
+    async merge(ref: string, data: In): Promise<void> {
+        const dataOut = this.onWrite(data);
+        return this.source.merge(ref, dataOut);
     }
 
     async delete(ref: string): Promise<void> {
@@ -222,6 +266,20 @@ class CachingStore<T> implements Store<T> {
         await this.source.put(ref, data);
     }
 
+    async merge(ref: string, data: T): Promise<void> {
+        // This implementation follows the logic from the paper for CachingStore merge:
+        // 1. Ensure the object is in the cache (by calling get).
+        // 2. Merge the new data into the cached object.
+        // 3. Get the full merged object from the cache.
+        // 4. Write the full merged object to the source.
+        await this.get(ref);
+        await this.cache.merge(ref, data);
+        const mergedData = await this.cache.get(ref);
+        if (mergedData !== null) {
+            await this.source.put(ref, mergedData);
+        }
+    }
+
     async delete(ref: string): Promise<void> {
         // Delete from both cache and source.
         await this.cache.delete(ref);
@@ -264,6 +322,11 @@ class LoggingStore<T> implements Store<T> {
     async put(ref: string, data: T): Promise<void> {
         await this.log('PUT', ref);
         return this.source.put(ref, data);
+    }
+
+    async merge(ref: string, data: T): Promise<void> {
+        await this.log('MERGE', ref);
+        return this.source.merge(ref, data);
     }
 
     async delete(ref: string): Promise<void> {
