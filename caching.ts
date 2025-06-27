@@ -114,6 +114,30 @@ class DiskStore implements Store<string> {
 }
 
 /**
+ * A Store that logs to the console.
+ * This acts as a sink for logging operations.
+ */
+class ConsoleStore implements Store<string> {
+    private readonly prefix: string;
+
+    constructor(prefix: string = '[LOG]') {
+        this.prefix = prefix;
+    }
+
+    async get(ref: string): Promise<string | null> {
+        throw new Error("ConsoleStore is write-only.");
+    }
+
+    async put(ref: string, data: string): Promise<void> {
+        console.log(`${this.prefix} ${ref} ${data}`);
+    }
+
+    async delete(ref: string): Promise<void> {
+        throw new Error("ConsoleStore is write-only.");
+    }
+}
+
+/**
  * A RelativeStore combinator, based on Figure 15.
  * It maps references by prepending a prefix.
  */
@@ -190,33 +214,29 @@ class CachingStore<T> implements Store<T> {
 
 /**
  * A LoggingStore combinator, based on Figure 19.
- * It's a pass-through store that logs operations.
+ * It's a pass-through store that logs operations to another store.
  */
-type LogFormatter = (operation: string, ref: string) => string;
-
 class LoggingStore<T> implements Store<T> {
     private readonly source: Store<T>;
-    private readonly log: { write: (message: string) => void };
-    private readonly formatter: LogFormatter;
+    private readonly logStore: Store<string>;
 
-    constructor(source: Store<T>, log: { write: (message: string) => void }, formatter: LogFormatter) {
+    constructor(source: Store<T>, logStore: Store<string>) {
         this.source = source;
-        this.log = log;
-        this.formatter = formatter;
+        this.logStore = logStore;
     }
 
     async get(ref: string): Promise<T | null> {
-        this.log.write(this.formatter('GET', ref));
+        await this.logStore.put('GET', ref);
         return this.source.get(ref);
     }
 
     async put(ref: string, data: T): Promise<void> {
-        this.log.write(this.formatter('PUT', ref));
+        await this.logStore.put('PUT', ref);
         return this.source.put(ref, data);
     }
 
     async delete(ref: string): Promise<void> {
-        this.log.write(this.formatter('DELETE', ref));
+        await this.logStore.put('DELETE', ref);
         return this.source.delete(ref);
     }
 }
@@ -226,46 +246,39 @@ class LoggingStore<T> implements Store<T> {
  * This is analogous to the client compositions in Section 4.4.
  */
 async function main() {
-    // 1. Set up the stores and logger.
-    const logger = { write: (message: string) => console.log(message) };
+    // 1. Set up the stores.
+    const sourceLogStore = new ConsoleStore('[SOURCE]');
+    const cacheLogStore = new ConsoleStore('[CACHE]');
 
     const httpSource = new HttpStore();
     const relativeHttpSource = new RelativeStore(httpSource, 'https://jsonplaceholder.typicode.com');
-    const loggedHttpSource = new LoggingStore(
-        relativeHttpSource,
-        logger,
-        (op, ref) => `[SOURCE] ${op} ${ref}`
-    );
+    const loggedHttpSource = new LoggingStore(relativeHttpSource, sourceLogStore);
 
     const dictCache = new DictStore<string>();
-    const loggedDictCache = new LoggingStore(
-        dictCache,
-        logger,
-        (op, ref) => `[CACHE] ${op} ${ref}`
-    );
+    const loggedDictCache = new LoggingStore(dictCache, cacheLogStore);
 
     const store = new CachingStore(loggedHttpSource, loggedDictCache);
 
     const resourceRef = 'todos/1';
 
     // 2. First request for the resource.
-    logger.write('--- First request (should be a cache miss) ---');
+    console.log('--- First request (should be a cache miss) ---');
     let todo = await store.get(resourceRef);
-    logger.write(`Data: ${todo}`);
-    logger.write('');
+    console.log(`Data: ${todo}`);
+    console.log('');
 
     // 3. Second request for the same resource.
-    logger.write('--- Second request (should be a cache hit) ---');
+    console.log('--- Second request (should be a cache hit) ---');
     todo = await store.get(resourceRef);
-    logger.write(`Data: ${todo}`);
-    logger.write('');
+    console.log(`Data: ${todo}`);
+    console.log('');
 
     // 4. Clean up the cache.
-    logger.write('--- Cleaning up cache ---');
+    console.log('--- Cleaning up cache ---');
     // In a real app, you might not delete from the source.
     // We use the CachingStore's delete which would try both.
     await dictCache.delete(resourceRef);
-    logger.write(`Cache for '${resourceRef}' cleaned.`);
+    console.log(`Cache for '${resourceRef}' cleaned.`);
 }
 
 main().catch(console.error);
