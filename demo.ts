@@ -46,6 +46,17 @@ interface Store<T> {
 }
 
 /**
+ * A base interface for stores that handle metadata alongside data.
+ * The metadata for a given piece of data is itself a Store.
+ */
+interface MetadataStore<T, M> {
+    get(ref: string): Promise<{ data: T | null, metadata: Store<M> }>;
+    put(ref: string, data: T, metadata?: Store<M>): Promise<void>;
+    merge(ref: string, data: T, metadata?: Store<M>): Promise<void>;
+    delete(ref: string, metadata?: Store<M>): Promise<void>;
+}
+
+/**
  * A Store for fetching resources over HTTP.
  * This acts as our primary data source.
  */
