@@ -106,23 +106,19 @@ class DiskStore implements Store<string> {
 class CachingStore<T> implements Store<T> {
     private readonly source: Store<T>;
     private readonly cache: Store<T>;
-    private readonly log?: { write: (message: string) => void };
 
-    constructor(source: Store<T>, cache: Store<T>, log?: { write: (message: string) => void }) {
+    constructor(source: Store<T>, cache: Store<T>) {
         this.source = source;
         this.cache = cache;
-        this.log = log;
     }
 
     async get(ref: string): Promise<T | null> {
         // Try to get data from cache first.
         let data = await this.cache.get(ref);
         if (data !== null) {
-            this.log?.write(`[Cache HIT] for '${ref}'`);
             return data;
         }
 
-        this.log?.write(`[Cache MISS] for '${ref}'`);
         // On a miss, get data from the source.
         data = await this.source.get(ref);
 
@@ -151,27 +147,31 @@ class CachingStore<T> implements Store<T> {
  * A LoggingStore combinator, based on Figure 19.
  * It's a pass-through store that logs operations.
  */
+type LogFormatter = (operation: string, ref: string) => string;
+
 class LoggingStore<T> implements Store<T> {
     private readonly source: Store<T>;
     private readonly log: { write: (message: string) => void };
+    private readonly formatter: LogFormatter;
 
-    constructor(source: Store<T>, log: { write: (message: string) => void }) {
+    constructor(source: Store<T>, log: { write: (message: string) => void }, formatter: LogFormatter) {
         this.source = source;
         this.log = log;
+        this.formatter = formatter;
     }
 
     async get(ref: string): Promise<T | null> {
-        this.log.write(`GET ${ref}`);
+        this.log.write(this.formatter('GET', ref));
         return this.source.get(ref);
     }
 
     async put(ref: string, data: T): Promise<void> {
-        this.log.write(`PUT ${ref}`);
+        this.log.write(this.formatter('PUT', ref));
         return this.source.put(ref, data);
     }
 
     async delete(ref: string): Promise<void> {
-        this.log.write(`DELETE ${ref}`);
+        this.log.write(this.formatter('DELETE', ref));
         return this.source.delete(ref);
     }
 }
@@ -185,9 +185,20 @@ async function main() {
     const logger = { write: (message: string) => console.log(message) };
 
     const httpSource = new HttpStore('https://jsonplaceholder.typicode.com');
+    const loggedHttpSource = new LoggingStore(
+        httpSource,
+        logger,
+        (op, ref) => `[SOURCE] ${op} ${ref}`
+    );
+
     const diskCache = new DiskStore('./.cache');
-    const cachedHttpStore = new CachingStore(httpSource, diskCache, logger);
-    const store = new LoggingStore(cachedHttpStore, logger);
+    const loggedDiskCache = new LoggingStore(
+        diskCache,
+        logger,
+        (op, ref) => `[CACHE] ${op} ${ref}`
+    );
+
+    const store = new CachingStore(loggedHttpSource, loggedDiskCache);
 
     const resourceRef = 'todos/1';
 
