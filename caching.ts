@@ -106,21 +106,23 @@ class DiskStore implements Store<string> {
 class CachingStore<T> implements Store<T> {
     private readonly source: Store<T>;
     private readonly cache: Store<T>;
+    private readonly log?: { write: (message: string) => void };
 
-    constructor(source: Store<T>, cache: Store<T>) {
+    constructor(source: Store<T>, cache: Store<T>, log?: { write: (message: string) => void }) {
         this.source = source;
         this.cache = cache;
+        this.log = log;
     }
 
     async get(ref: string): Promise<T | null> {
         // Try to get data from cache first.
         let data = await this.cache.get(ref);
         if (data !== null) {
-            console.log(`[Cache HIT] for '${ref}'`);
+            this.log?.write(`[Cache HIT] for '${ref}'`);
             return data;
         }
 
-        console.log(`[Cache MISS] for '${ref}'`);
+        this.log?.write(`[Cache MISS] for '${ref}'`);
         // On a miss, get data from the source.
         data = await this.source.get(ref);
 
@@ -146,35 +148,67 @@ class CachingStore<T> implements Store<T> {
 }
 
 /**
+ * A LoggingStore combinator, based on Figure 19.
+ * It's a pass-through store that logs operations.
+ */
+class LoggingStore<T> implements Store<T> {
+    private readonly source: Store<T>;
+    private readonly log: { write: (message: string) => void };
+
+    constructor(source: Store<T>, log: { write: (message: string) => void }) {
+        this.source = source;
+        this.log = log;
+    }
+
+    async get(ref: string): Promise<T | null> {
+        this.log.write(`GET ${ref}`);
+        return this.source.get(ref);
+    }
+
+    async put(ref: string, data: T): Promise<void> {
+        this.log.write(`PUT ${ref}`);
+        return this.source.put(ref, data);
+    }
+
+    async delete(ref: string): Promise<void> {
+        this.log.write(`DELETE ${ref}`);
+        return this.source.delete(ref);
+    }
+}
+
+/**
  * Example usage demonstrating the caching behavior.
  * This is analogous to the client compositions in Section 4.4.
  */
 async function main() {
-    // 1. Set up the stores.
+    // 1. Set up the stores and logger.
+    const logger = { write: (message: string) => console.log(message) };
+
     const httpSource = new HttpStore('https://jsonplaceholder.typicode.com');
     const diskCache = new DiskStore('./.cache');
-    const cachedHttpStore = new CachingStore(httpSource, diskCache);
+    const cachedHttpStore = new CachingStore(httpSource, diskCache, logger);
+    const store = new LoggingStore(cachedHttpStore, logger);
 
     const resourceRef = 'todos/1';
 
     // 2. First request for the resource.
-    console.log('--- First request (should be a cache miss) ---');
-    let todo = await cachedHttpStore.get(resourceRef);
-    console.log('Data:', todo);
-    console.log('\n');
+    logger.write('--- First request (should be a cache miss) ---');
+    let todo = await store.get(resourceRef);
+    logger.write(`Data: ${todo}`);
+    logger.write('');
 
     // 3. Second request for the same resource.
-    console.log('--- Second request (should be a cache hit) ---');
-    todo = await cachedHttpStore.get(resourceRef);
-    console.log('Data:', todo);
-    console.log('\n');
+    logger.write('--- Second request (should be a cache hit) ---');
+    todo = await store.get(resourceRef);
+    logger.write(`Data: ${todo}`);
+    logger.write('');
 
     // 4. Clean up the cache.
-    console.log('--- Cleaning up cache ---');
+    logger.write('--- Cleaning up cache ---');
     // In a real app, you might not delete from the source.
     // We use the CachingStore's delete which would try both.
     await diskCache.delete(resourceRef);
-    console.log(`Cache for '${resourceRef}' cleaned.`);
+    logger.write(`Cache for '${resourceRef}' cleaned.`);
 }
 
 main().catch(console.error);
