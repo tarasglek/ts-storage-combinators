@@ -14,3 +14,4 @@ Hard patterns that storage combinators make easy:
 * Make a compacting Store out of ^
 * Move ^ to S3 using S3 conditional put/get via etag
 * Use S3 appends instead of ^ to optimize writes, but fallback to ^ on 10K write limit
+* Mock storage for tests, dev and proper db backend in prod
