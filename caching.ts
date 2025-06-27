@@ -104,18 +104,13 @@ class DiskStore implements Store<string> {
  * This acts as a sink for logging operations.
  */
 class ConsoleStore implements Store<string> {
-    private readonly prefix: string;
-
-    constructor(prefix: string = '[LOG]') {
-        this.prefix = prefix;
-    }
-
     async get(ref: string): Promise<string | null> {
         throw new Error("ConsoleStore is write-only.");
     }
 
     async put(ref: string, data: string): Promise<void> {
-        console.log(`${this.prefix} ${ref} ${data}`);
+        // Use process.stdout.write for raw output without a newline.
+        process.stdout.write(data);
     }
 
     async delete(ref: string): Promise<void> {
@@ -152,6 +147,33 @@ class RelativeStore<T> implements Store<T> {
 
     async delete(ref: string): Promise<void> {
         return this.source.delete(this.mapRef(ref));
+    }
+}
+
+/**
+ * A SerializerStore is a mapping store that transforms data on writes.
+ */
+class SerializerStore implements Store<string> {
+    private readonly source: Store<string>;
+    private readonly onWrite: (data: string) => string;
+
+    constructor(source: Store<string>, onWrite: (data: string) => string) {
+        this.source = source;
+        this.onWrite = onWrite;
+    }
+
+    async get(ref: string): Promise<string | null> {
+        // Pass-through for get
+        return this.source.get(ref);
+    }
+
+    async put(ref: string, data: string): Promise<void> {
+        return this.source.put(ref, this.onWrite(data));
+    }
+
+    async delete(ref: string): Promise<void> {
+        // Pass-through for delete
+        return this.source.delete(ref);
     }
 }
 
@@ -214,24 +236,32 @@ class CachingStore<T> implements Store<T> {
 class LoggingStore<T> implements Store<T> {
     private readonly source: Store<T>;
     private readonly logStore: Store<string>;
+    private readonly prefix: string;
 
-    constructor(source: Store<T>, logStore: Store<string>) {
+    constructor(source: Store<T>, logStore: Store<string>, prefix: string) {
         this.source = source;
         this.logStore = logStore;
+        this.prefix = prefix;
+    }
+
+    private async log(operation: string, ref: string) {
+        const message = `${this.prefix} ${operation} ${ref}`;
+        // The 'ref' for the logStore.put is arbitrary. 'log' is fine.
+        return this.logStore.put('log', message);
     }
 
     async get(ref: string): Promise<T | null> {
-        await this.logStore.put('GET', ref);
+        await this.log('GET', ref);
         return this.source.get(ref);
     }
 
     async put(ref: string, data: T): Promise<void> {
-        await this.logStore.put('PUT', ref);
+        await this.log('PUT', ref);
         return this.source.put(ref, data);
     }
 
     async delete(ref: string): Promise<void> {
-        await this.logStore.put('DELETE', ref);
+        await this.log('DELETE', ref);
         return this.source.delete(ref);
     }
 }
@@ -242,8 +272,8 @@ class LoggingStore<T> implements Store<T> {
  */
 async function main() {
     // 1. Set up the stores.
-    const sourceLogStore = new ConsoleStore('[SOURCE]');
-    const cacheLogStore = new ConsoleStore('[CACHE]');
+    const consoleLog = new ConsoleStore();
+    const logPipeline = new SerializerStore(consoleLog, (data) => `${data}\n`);
 
     const httpSource = new HttpStore();
     const relativeHttpSource = new RelativeStore(
@@ -251,10 +281,10 @@ async function main() {
         'https://jsonplaceholder.typicode.com',
         (prefix, ref) => `${prefix}/${ref}` // URL joiner
     );
-    const loggedHttpSource = new LoggingStore(relativeHttpSource, sourceLogStore);
+    const loggedHttpSource = new LoggingStore(relativeHttpSource, logPipeline, '[SOURCE]');
 
     const dictCache = new DictStore<string>();
-    const loggedDictCache = new LoggingStore(dictCache, cacheLogStore);
+    const loggedDictCache = new LoggingStore(dictCache, logPipeline, '[CACHE]');
 
     const store = new CachingStore(loggedHttpSource, loggedDictCache);
 
