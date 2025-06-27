@@ -215,6 +215,14 @@ class CachingStore<T> implements Store<T> {
 /**
  * A LoggingStore combinator, based on Figure 19.
  * It's a pass-through store that logs operations to another store.
+ *
+ * This store "watches" all operations (get, put, delete) that pass
+ * through it and sends a record of them to its `logStore`. This is very
+ * versatile. For simple debugging, the `logStore` can be a `ConsoleStore`
+ * that prints to the screen. For more advanced systems, it could send these
+ * change records to a message queue or another database. This is the core
+ * idea behind Change Data Capture (CDC), a pattern used to keep different
+ * data systems synchronized.
  */
 class LoggingStore<T> implements Store<T> {
     private readonly source: Store<T>;
