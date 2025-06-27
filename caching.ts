@@ -70,21 +70,14 @@ class HttpStore implements Store<string> {
  * This will serve as our cache.
  */
 class DiskStore implements Store<string> {
-    private readonly baseDir: string;
-
-    constructor(baseDir: string) {
-        this.baseDir = baseDir;
-    }
-
-    private getPath(ref: string): string {
+    private sanitizePath(ref: string): string {
         // Sanitize ref to prevent directory traversal attacks.
-        const safeRef = path.normalize(ref).replace(/^(\.\.[\/\\])+/, '');
-        return path.join(this.baseDir, safeRef);
+        return path.normalize(ref).replace(/^(\.\.[\/\\])+/, '');
     }
 
     async get(ref: string): Promise<string | null> {
         try {
-            const filePath = this.getPath(ref);
+            const filePath = this.sanitizePath(ref);
             return await fs.readFile(filePath, 'utf-8');
         } catch (error: any) {
             // A missing file is a cache miss, not an error.
@@ -96,14 +89,14 @@ class DiskStore implements Store<string> {
     }
 
     async put(ref: string, data: string): Promise<void> {
-        const filePath = this.getPath(ref);
+        const filePath = this.sanitizePath(ref);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, data, 'utf-8');
     }
 
     async delete(ref: string): Promise<void> {
         try {
-            await fs.unlink(this.getPath(ref));
+            await fs.unlink(this.sanitizePath(ref));
         } catch (error: any) {
             // It's not an error if the file to delete doesn't exist.
             if (error.code !== 'ENOENT') {
@@ -144,15 +137,16 @@ class ConsoleStore implements Store<string> {
 class RelativeStore<T> implements Store<T> {
     private readonly source: Store<T>;
     private readonly prefix: string;
+    private readonly joiner: (a: string, b: string) => string;
 
-    constructor(source: Store<T>, prefix: string) {
+    constructor(source: Store<T>, prefix: string, joiner: (a: string, b: string) => string) {
         this.source = source;
         this.prefix = prefix;
+        this.joiner = joiner;
     }
 
     private mapRef(ref: string): string {
-        // A simple string concatenation for URL paths.
-        return `${this.prefix}/${ref}`;
+        return this.joiner(this.prefix, ref);
     }
 
     async get(ref: string): Promise<T | null> {
@@ -259,7 +253,11 @@ async function main() {
     const cacheLogStore = new ConsoleStore('[CACHE]');
 
     const httpSource = new HttpStore();
-    const relativeHttpSource = new RelativeStore(httpSource, 'https://jsonplaceholder.typicode.com');
+    const relativeHttpSource = new RelativeStore(
+        httpSource,
+        'https://jsonplaceholder.typicode.com',
+        (prefix, ref) => `${prefix}/${ref}` // URL joiner
+    );
     const loggedHttpSource = new LoggingStore(relativeHttpSource, sourceLogStore);
 
     const dictCache = new DictStore<string>();
